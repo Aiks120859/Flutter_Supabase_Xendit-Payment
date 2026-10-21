@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-const orange = Color(0xFF168C83);
-const bg = Color(0xFFF5F7F7);
+const orange = Color(0xFF087F70);
+const bg = Color(0xFFF6F5EF);
 const card = Color(0xFFFFFFFF);
 
 Future<void> main() async {
@@ -834,7 +834,6 @@ class _StoreScreenState extends State<StoreScreen> {
           ),
         ),
         const SizedBox(height: 12),
-
       ],
     );
   }
@@ -847,7 +846,7 @@ class _StoreScreenState extends State<StoreScreen> {
           padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
             gradient: const LinearGradient(
-              colors: [Color(0xFF472600), Color(0xFF242424)],
+              colors: [Color(0xFF103F39), Color(0xFF087F70)],
             ),
             borderRadius: BorderRadius.circular(18),
           ),
@@ -861,10 +860,18 @@ class _StoreScreenState extends State<StoreScreen> {
               SizedBox(height: 10),
               Text(
                 'Appliances for\neveryday living.',
-                style: TextStyle(fontSize: 27, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                  fontSize: 27,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                  height: 1.2,
+                ),
               ),
               SizedBox(height: 8),
-              Text('Explore appliances for your home.'),
+              Text(
+                'Explore appliances for your home.',
+                style: TextStyle(color: Color(0xFFE0F2EE)),
+              ),
             ],
           ),
         ),
@@ -924,7 +931,7 @@ class _StoreScreenState extends State<StoreScreen> {
             crossAxisCount: 2,
             mainAxisSpacing: 12,
             crossAxisSpacing: 12,
-            mainAxisExtent: 260,
+            mainAxisExtent: 320,
           ),
           itemBuilder: (context, index) {
             final p = filtered[index];
@@ -933,8 +940,18 @@ class _StoreScreenState extends State<StoreScreen> {
               onTap: () => Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (_) =>
-                      ProductDetails(product: p, onAdd: () => add(p)),
+                  builder: (_) => ProductDetails(
+                    product: p,
+                    onAdd: () => add(p),
+                    onBuyNow: () {
+                      setState(() {
+                        cartItems
+                          ..clear()
+                          ..[p] = 1;
+                        tab = 1;
+                      });
+                    },
+                  ),
                 ),
               ),
               child: Container(
@@ -979,6 +996,79 @@ class _StoreScreenState extends State<StoreScreen> {
                     Text(
                       'Stock: ${p.stock}',
                       style: const TextStyle(color: Colors.grey, fontSize: 11),
+                    ),
+                    const SizedBox(height: 7),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: p.stock <= 0
+                                ? null
+                                : () {
+                                    add(p);
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          '${p.name} added to cart',
+                                        ),
+                                        duration: const Duration(seconds: 1),
+                                      ),
+                                    );
+                                  },
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: orange,
+                              side: const BorderSide(color: orange),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 2,
+                                vertical: 8,
+                              ),
+                              minimumSize: const Size(0, 34),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            child: const Text(
+                              'ADD TO CART',
+                              maxLines: 1,
+                              style: TextStyle(
+                                fontSize: 9,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 5),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: p.stock <= 0
+                                ? null
+                                : () {
+                                    setState(() {
+                                      cartItems
+                                        ..clear()
+                                        ..[p] = 1;
+                                      tab = 1;
+                                    });
+                                  },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: orange,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 2,
+                                vertical: 8,
+                              ),
+                              minimumSize: const Size(0, 34),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            child: const Text(
+                              'BUY NOW',
+                              maxLines: 1,
+                              style: TextStyle(
+                                fontSize: 9,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -1144,16 +1234,36 @@ class _StoreScreenState extends State<StoreScreen> {
                   }
 
                   try {
-                    final response = await Supabase.instance.client.functions
-                        .invoke(
-                          'create-payment',
-                          body: {
-                            'amount': total,
-                            'order_id':
-                                'order_${DateTime.now().millisecondsSinceEpoch}',
-                            'method': method,
-                          },
-                        );
+                    final client = Supabase.instance.client;
+                    final user = client.auth.currentUser;
+
+                    if (user == null) {
+                      throw Exception('Please sign in first.');
+                    }
+
+                    // Save the order before creating the payment invoice.
+                    final savedOrder = await client
+                        .from('orders')
+                        .insert({
+                          'user_id': user.id,
+                          'total': total,
+                          'status': 'pending',
+                          'payment_method': method,
+                          'payment_status': 'pending',
+                        })
+                        .select('id')
+                        .single();
+
+                    final orderId = savedOrder['id'].toString();
+
+                    final response = await client.functions.invoke(
+                      'create-payment',
+                      body: {
+                        'amount': total,
+                        'order_id': orderId,
+                        'method': method,
+                      },
+                    );
 
                     final data = response.data;
                     if (data is! Map ||
@@ -1172,12 +1282,22 @@ class _StoreScreenState extends State<StoreScreen> {
                       throw Exception('Invalid checkout URL.');
                     }
 
+                    final reference = data['id'] ?? data['external_id'];
+                    if (reference != null) {
+                      await client
+                          .from('orders')
+                          .update({'payment_reference': reference.toString()})
+                          .eq('id', orderId);
+                    }
+
                     final opened = await launchUrl(
                       uri,
                       mode: LaunchMode.externalApplication,
                     );
                     if (!opened) {
-                      throw Exception('Unable to open checkout page.');
+                      throw Exception(
+                        'Order saved as pending, but checkout could not be opened.',
+                      );
                     }
                   } catch (e) {
                     if (!mounted) return;
@@ -1323,8 +1443,14 @@ class _CustomerServiceScreenState extends State<CustomerServiceScreen> {
 class ProductDetails extends StatelessWidget {
   final Product product;
   final VoidCallback onAdd;
+  final VoidCallback onBuyNow;
 
-  const ProductDetails({super.key, required this.product, required this.onAdd});
+  const ProductDetails({
+    super.key,
+    required this.product,
+    required this.onAdd,
+    required this.onBuyNow,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1375,7 +1501,7 @@ class ProductDetails extends StatelessWidget {
           const SizedBox(height: 8),
           Text(
             product.description,
-            style: const TextStyle(color: Colors.white70, height: 1.6),
+            style: const TextStyle(color: Color(0xFF526A68), height: 1.6),
           ),
           const SizedBox(height: 22),
           const Text(
@@ -1397,15 +1523,47 @@ class ProductDetails extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 28),
-          FilledButton.icon(
-            style: FilledButton.styleFrom(
-              backgroundColor: orange,
-              foregroundColor: Colors.black,
-              padding: const EdgeInsets.all(16),
-            ),
-            onPressed: product.stock > 0 ? onAdd : null,
-            icon: const Icon(Icons.shopping_cart),
-            label: const Text('ADD TO CART'),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: orange,
+                    side: const BorderSide(color: orange),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+                  onPressed: product.stock > 0 ? onAdd : null,
+                  icon: const Icon(Icons.shopping_cart_outlined),
+                  label: const Text(
+                    'ADD TO CART',
+                    maxLines: 1,
+                    style: TextStyle(fontSize: 11),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: orange,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+                  onPressed: product.stock > 0
+                      ? () {
+                          onBuyNow();
+                          Navigator.pop(context);
+                        }
+                      : null,
+                  icon: const Icon(Icons.flash_on),
+                  label: const Text(
+                    'BUY NOW',
+                    maxLines: 1,
+                    style: TextStyle(fontSize: 11),
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
