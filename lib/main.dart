@@ -834,25 +834,7 @@ class _StoreScreenState extends State<StoreScreen> {
           ),
         ),
         const SizedBox(height: 12),
-        Card(
-          color: card,
-          child: ListTile(
-            leading: const Icon(Icons.logout, color: Colors.redAccent),
-            title: const Text('Sign Out'),
-            subtitle: const Text('Log out of your account'),
-            onTap: () async {
-              try {
-                await Supabase.instance.client.auth.signOut();
-              } catch (e) {
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Sign out failed: $e')),
-                  );
-                }
-              }
-            },
-          ),
-        ),
+
       ],
     );
   }
