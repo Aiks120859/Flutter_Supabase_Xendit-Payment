@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -715,6 +718,153 @@ class _StoreScreenState extends State<StoreScreen> {
   String query = '';
   int tab = 0;
   final Map<Product, int> cartItems = {};
+  final List<Map<String, dynamic>> localOrders = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLocalOrders();
+  }
+
+  Future<void> _loadLocalOrders() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('appliancehub_guest_orders');
+    if (raw == null) return;
+
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is List) {
+        final loaded = decoded
+            .whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .toList();
+        if (mounted) {
+          setState(() {
+            localOrders
+              ..clear()
+              ..addAll(loaded);
+          });
+        }
+      }
+    } catch (_) {
+      // Ignore invalid local history and keep the app usable.
+    }
+  }
+
+  Future<void> _recordLocalOrder({
+    required String orderId,
+    required double total,
+    required String method,
+  }) async {
+    final order = <String, dynamic>{
+      'order_id': orderId,
+      'total': total,
+      'payment_method': method,
+      'status': 'pending',
+      'payment_status': 'pending',
+      'created_at': DateTime.now().toIso8601String(),
+    };
+
+    localOrders.insert(0, order);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('appliancehub_guest_orders', jsonEncode(localOrders));
+
+    if (mounted) setState(() {});
+  }
+
+  Widget _orders() {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        const Text(
+          'My Orders',
+          style: TextStyle(fontSize: 25, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        const Text('Your orders on this device'),
+        const SizedBox(height: 16),
+        if (localOrders.isEmpty)
+          const Card(
+            child: Padding(
+              padding: EdgeInsets.all(28),
+              child: Column(
+                children: [
+                  Icon(Icons.receipt_long_outlined, size: 48),
+                  SizedBox(height: 12),
+                  Text('No orders yet'),
+                  Text('Your completed checkout will appear here.'),
+                ],
+              ),
+            ),
+          ),
+        ...localOrders.map((order) {
+          final total = (order['total'] as num?)?.toDouble() ?? 0;
+          final method = order['payment_method']?.toString() ?? 'COD';
+          final status = order['status']?.toString() ?? 'pending';
+          final date = DateTime.tryParse(order['created_at']?.toString() ?? '');
+          return Card(
+            color: card,
+            margin: const EdgeInsets.only(bottom: 12),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.receipt_long, color: orange),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Text(
+                          'Order',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.withValues(alpha: 0.14),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          status.toUpperCase(),
+                          style: const TextStyle(
+                            color: Colors.deepOrange,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Text('Reference: ${order['order_id'] ?? 'Guest order'}'),
+                  Text('Payment method: $method'),
+                  Text(
+                    'Payment status: ${order['payment_status'] ?? 'pending'}',
+                  ),
+                  if (date != null)
+                    Text('Date: ${date.toLocal().toString().substring(0, 16)}'),
+                  const Divider(height: 24),
+                  Text(
+                    '₱${total.toStringAsFixed(2)}',
+                    style: const TextStyle(
+                      fontSize: 21,
+                      fontWeight: FontWeight.bold,
+                      color: orange,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }),
+      ],
+    );
+  }
 
   final categories = const [
     'All',
@@ -769,6 +919,8 @@ class _StoreScreenState extends State<StoreScreen> {
           ? _home(filtered)
           : tab == 1
           ? _cart()
+          : tab == 2
+          ? _orders()
           : _profile(),
       bottomNavigationBar: NavigationBar(
         backgroundColor: card,
@@ -785,6 +937,11 @@ class _StoreScreenState extends State<StoreScreen> {
             icon: Icon(Icons.shopping_bag_outlined),
             selectedIcon: Icon(Icons.shopping_bag, color: orange),
             label: 'My Cart',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.receipt_long_outlined),
+            selectedIcon: Icon(Icons.receipt_long, color: orange),
+            label: 'My Orders',
           ),
           NavigationDestination(
             icon: Icon(Icons.person_outline),
@@ -1201,18 +1358,19 @@ class _StoreScreenState extends State<StoreScreen> {
 
                   if (method == 'COD') {
                     try {
-                      final user = Supabase.instance.client.auth.currentUser;
-                      if (user == null) {
-                        throw Exception('Please sign in first.');
-                      }
-
                       await Supabase.instance.client.from('orders').insert({
-                        'user_id': user.id,
+                        'user_id': null,
                         'total': total,
                         'status': 'pending',
                         'payment_method': 'COD',
                         'payment_status': 'pending',
                       });
+
+                      await _recordLocalOrder(
+                        orderId: 'COD-${DateTime.now().millisecondsSinceEpoch}',
+                        total: total,
+                        method: 'COD',
+                      );
 
                       if (!mounted) return;
                       setState(() {
@@ -1235,34 +1393,10 @@ class _StoreScreenState extends State<StoreScreen> {
 
                   try {
                     final client = Supabase.instance.client;
-                    final user = client.auth.currentUser;
-
-                    if (user == null) {
-                      throw Exception('Please sign in first.');
-                    }
-
-                    // Save the order before creating the payment invoice.
-                    final savedOrder = await client
-                        .from('orders')
-                        .insert({
-                          'user_id': user.id,
-                          'total': total,
-                          'status': 'pending',
-                          'payment_method': method,
-                          'payment_status': 'pending',
-                        })
-                        .select('id')
-                        .single();
-
-                    final orderId = savedOrder['id'].toString();
 
                     final response = await client.functions.invoke(
                       'create-payment',
-                      body: {
-                        'amount': total,
-                        'order_id': orderId,
-                        'method': method,
-                      },
+                      body: {'amount': total, 'method': method},
                     );
 
                     final data = response.data;
@@ -1282,6 +1416,11 @@ class _StoreScreenState extends State<StoreScreen> {
                       throw Exception('Invalid checkout URL.');
                     }
 
+                    final orderId = data['order_id']?.toString();
+                    if (orderId == null || orderId.isEmpty) {
+                      throw Exception('Payment response has no order ID.');
+                    }
+
                     final reference = data['id'] ?? data['external_id'];
                     if (reference != null) {
                       await client
@@ -1289,6 +1428,12 @@ class _StoreScreenState extends State<StoreScreen> {
                           .update({'payment_reference': reference.toString()})
                           .eq('id', orderId);
                     }
+
+                    await _recordLocalOrder(
+                      orderId: orderId,
+                      total: total,
+                      method: method,
+                    );
 
                     final opened = await launchUrl(
                       uri,
